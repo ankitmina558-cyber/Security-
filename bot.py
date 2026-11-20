@@ -32,8 +32,7 @@ from nudenet import NudeDetector
 # ---------------- CONFIG ----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 
-# NudeNet ke labels jinko hum "18+ content" maanenge.
-# Zaroorat ke hisaab se yahan se labels add/remove kar sakte ho.
+# HIGH SECURITY MODE: exposed + covered/suggestive dono categories flag hoti hain.
 NSFW_LABELS = {
     "FEMALE_GENITALIA_EXPOSED",
     "MALE_GENITALIA_EXPOSED",
@@ -41,10 +40,16 @@ NSFW_LABELS = {
     "BUTTOCKS_EXPOSED",
     "ANUS_EXPOSED",
     "MALE_BREAST_EXPOSED",
+    "FEMALE_BREAST_COVERED",
+    "BUTTOCKS_COVERED",
+    "FEMALE_GENITALIA_COVERED",
+    "ANUS_COVERED",
+    "ARMPITS_EXPOSED",
+    "BELLY_EXPOSED",
 }
 
-# Kitna confident hona chahiye model ko (0.0 - 1.0). Zyada value = kam false positive.
-CONFIDENCE_THRESHOLD = 0.55
+# High security: zyada sensitive (kam confidence par bhi flag karega).
+CONFIDENCE_THRESHOLD = 0.35
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -145,15 +150,41 @@ async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, fi
             return
 
     if is_nsfw(jpeg_bytes):
+        sender = message.from_user
+        sender_mention = sender.mention_html() if sender else "Unknown user"
+
         try:
             await message.delete()
-            logger.info(f"Deleted NSFW {'sticker' if is_sticker else 'photo'} in chat {chat.id}")
-            warn = await context.bot.send_message(
-                chat_id=chat.id,
-                text="🚫 18+ content detect hua, message delete kar diya gaya.",
-            )
+            logger.info(f"Deleted NSFW {'sticker' if is_sticker else 'photo'} in chat {chat.id}, sent by {sender.id if sender else 'unknown'}")
         except Exception as e:
             logger.error(f"Delete failed (check admin/delete permission): {e}")
+            return
+
+        # Group ke admins fetch karke tag karte hain
+        admin_mentions = []
+        try:
+            admins = await context.bot.get_chat_administrators(chat.id)
+            for a in admins:
+                if a.user.is_bot:
+                    continue
+                admin_mentions.append(a.user.mention_html())
+        except Exception as e:
+            logger.error(f"Could not fetch admins: {e}")
+
+        admin_text = " ".join(admin_mentions) if admin_mentions else "Admins"
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat.id,
+                text=(
+                    f"🚫 <b>18+ content removed</b>\n"
+                    f"Sent by: {sender_mention}\n"
+                    f"{admin_text}, please review this user."
+                ),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"Could not send delete notice: {e}")
     else:
         logger.info("No NSFW content found above threshold - message not deleted.")
 
