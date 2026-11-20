@@ -1,0 +1,7 @@
+
+name = "yuta-telegram-bot"
+main = "worker.py"
+compatibility_date = "2026-11-20"
+
+[vars]
+BOT_MODE = "webhook"
