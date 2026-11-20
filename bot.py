@@ -65,6 +65,8 @@ def is_nsfw(image_bytes: bytes) -> bool:
         logger.error(f"Detection error: {e}")
         return False
 
+    logger.info(f"Raw detector results: {results}")
+
     for r in results:
         if r.get("class") in NSFW_LABELS and r.get("score", 0) >= CONFIDENCE_THRESHOLD:
             logger.info(f"NSFW match: {r.get('class')} score={r.get('score'):.2f}")
@@ -75,6 +77,7 @@ def is_nsfw(image_bytes: bytes) -> bool:
 async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str, is_sticker: bool = False):
     chat = update.effective_chat
     message = update.effective_message
+    logger.info(f"Scanning {'sticker' if is_sticker else 'photo'} in chat {chat.id}")
 
     try:
         tg_file = await context.bot.get_file(file_id)
@@ -103,14 +106,18 @@ async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, fi
             )
         except Exception as e:
             logger.error(f"Delete failed (check admin/delete permission): {e}")
+    else:
+        logger.info("No NSFW content found above threshold - message not deleted.")
 
 
 async def handle_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sticker = update.effective_message.sticker
     if sticker is None:
         return
+    logger.info(f"Sticker received. animated={sticker.is_animated} video={sticker.is_video}")
     # Animated/video stickers (.tgs/.webm) skip karte hain, static .webp hi check hota hai
     if sticker.is_animated or sticker.is_video:
+        logger.info("Skipping animated/video sticker (not supported yet).")
         return
     await scan_and_delete(update, context, sticker.file_id, is_sticker=True)
 
