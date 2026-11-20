@@ -14,6 +14,8 @@ Detection: NudeNet (local model, koi API call nahi, koi daily limit nahi)
 import logging
 import os
 import io
+import subprocess
+import tempfile
 from datetime import datetime
 
 from telegram import Update
@@ -53,6 +55,37 @@ logger = logging.getLogger("yuta-bot")
 detector = NudeDetector()  # pehli baar chalne par model download/load hota hai
 
 
+def extract_first_frame(video_bytes: bytes) -> bytes | None:
+    """Video sticker (.webm) ke bytes se pehla frame nikal kar JPEG bytes return karta hai.
+    ffmpeg system me installed hona chahiye. Agar fail ho to None return karta hai."""
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as vid_f:
+        vid_f.write(video_bytes)
+        vid_path = vid_f.name
+    out_path = vid_path + ".jpg"
+
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", vid_path, "-vframes", "1", out_path],
+            capture_output=True,
+            timeout=15,
+        )
+        if result.returncode != 0 or not os.path.exists(out_path):
+            logger.error(f"ffmpeg frame extraction failed: {result.stderr.decode(errors='ignore')[-300:]}")
+            return None
+        with open(out_path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        logger.error("ffmpeg not installed on this host - video stickers can't be scanned without it.")
+        return None
+    except Exception as e:
+        logger.error(f"Frame extraction error: {e}")
+        return None
+    finally:
+        for p in (vid_path, out_path):
+            if os.path.exists(p):
+                os.remove(p)
+
+
 def is_nsfw(image_bytes: bytes) -> bool:
     """Image bytes ko check karta hai, True return karta hai agar NSFW content mile."""
     tmp_path = "/tmp/yuta_scan_tmp.jpg"
@@ -74,10 +107,10 @@ def is_nsfw(image_bytes: bytes) -> bool:
     return False
 
 
-async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str, is_sticker: bool = False):
+async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str, is_sticker: bool = False, is_video: bool = False):
     chat = update.effective_chat
     message = update.effective_message
-    logger.info(f"Scanning {'sticker' if is_sticker else 'photo'} in chat {chat.id}")
+    logger.info(f"Scanning {'video sticker' if is_video else ('sticker' if is_sticker else 'photo')} in chat {chat.id}")
 
     try:
         tg_file = await context.bot.get_file(file_id)
@@ -86,15 +119,30 @@ async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, fi
         logger.error(f"File download failed: {e}")
         return
 
-    # Sticker agar .webp animated/video hai to skip (sirf static webp/png/jpg check karte hain)
-    try:
-        img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG")
-        jpeg_bytes = buf.getvalue()
-    except Exception as e:
-        logger.warning(f"Image convert skip (likely animated sticker): {e}")
-        return
+    if is_video:
+        # Video sticker (.webm) - pehle frame nikal kar check karte hain
+        frame_bytes = extract_first_frame(bytes(file_bytes))
+        if frame_bytes is None:
+            logger.warning("Could not extract frame from video sticker - skipping scan.")
+            return
+        try:
+            img = Image.open(io.BytesIO(frame_bytes)).convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            jpeg_bytes = buf.getvalue()
+        except Exception as e:
+            logger.error(f"Extracted frame could not be processed: {e}")
+            return
+    else:
+        # Static sticker/photo (.webp/.png/.jpg)
+        try:
+            img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG")
+            jpeg_bytes = buf.getvalue()
+        except Exception as e:
+            logger.warning(f"Image convert skip (likely animated .tgs sticker): {e}")
+            return
 
     if is_nsfw(jpeg_bytes):
         try:
@@ -115,11 +163,11 @@ async def handle_sticker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if sticker is None:
         return
     logger.info(f"Sticker received. animated={sticker.is_animated} video={sticker.is_video}")
-    # Animated/video stickers (.tgs/.webm) skip karte hain, static .webp hi check hota hai
-    if sticker.is_animated or sticker.is_video:
-        logger.info("Skipping animated/video sticker (not supported yet).")
+    # .tgs (Lottie animated) stickers abhi bhi skip hote hain - unse frame nikalna alag tareeka maangta hai
+    if sticker.is_animated:
+        logger.info("Skipping .tgs animated sticker (not supported yet).")
         return
-    await scan_and_delete(update, context, sticker.file_id, is_sticker=True)
+    await scan_and_delete(update, context, sticker.file_id, is_sticker=True, is_video=sticker.is_video)
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
