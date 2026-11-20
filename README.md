@@ -49,7 +49,12 @@ Bas. Ab bot 24/7 har sticker/photo scan karega, NSFW milte hi delete kar dega.
 
 ## Note
 
-- Animated (.tgs) aur video stickers abhi skip hote hain — sirf static
-  image-based stickers/photos check hote hain.
+- **Video stickers (.webm)** ab bhi scan hote hain — bot unka pehla frame
+  nikal kar check karta hai. Iske liye host par **ffmpeg installed** hona
+  zaroori hai (zyada free hosts me already hota hai; agar nahi hai to host
+  ke package manager se install karna hoga, ya logs me "ffmpeg not installed"
+  error dikhega).
+- **Animated (.tgs / Lottie) stickers** abhi bhi skip hote hain — ye format
+  alag hai aur frame extraction ka tareeka alag chahiye.
 - Bot ke paas "Delete Messages" permission na ho to delete fail hoga
   (log me error dikhega).
