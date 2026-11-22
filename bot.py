@@ -91,8 +91,9 @@ def extract_first_frame(video_bytes: bytes) -> bytes | None:
                 os.remove(p)
 
 
-def is_nsfw(image_bytes: bytes) -> bool:
-    """Image bytes ko check karta hai, True return karta hai agar NSFW content mile."""
+def check_nsfw(image_bytes: bytes):
+    """Image bytes ko check karta hai. NSFW milne par (label, confidence_score) return karta hai,
+    nahi to None return karta hai."""
     tmp_path = "/tmp/yuta_scan_tmp.jpg"
     with open(tmp_path, "wb") as f:
         f.write(image_bytes)
@@ -101,15 +102,19 @@ def is_nsfw(image_bytes: bytes) -> bool:
         results = detector.detect(tmp_path)
     except Exception as e:
         logger.error(f"Detection error: {e}")
-        return False
+        return None
 
     logger.info(f"Raw detector results: {results}")
 
+    best_match = None
     for r in results:
         if r.get("class") in NSFW_LABELS and r.get("score", 0) >= CONFIDENCE_THRESHOLD:
-            logger.info(f"NSFW match: {r.get('class')} score={r.get('score'):.2f}")
-            return True
-    return False
+            if best_match is None or r.get("score", 0) > best_match[1]:
+                best_match = (r.get("class"), r.get("score", 0))
+
+    if best_match:
+        logger.info(f"NSFW match: {best_match[0]} score={best_match[1]:.2f}")
+    return best_match
 
 
 async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, file_id: str, is_sticker: bool = False, is_video: bool = False):
@@ -149,7 +154,11 @@ async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, fi
             logger.warning(f"Image convert skip (likely animated .tgs sticker): {e}")
             return
 
-    if is_nsfw(jpeg_bytes):
+    match = check_nsfw(jpeg_bytes)
+    if match:
+        label, score = match
+        confidence_pct = round(score * 100, 1)
+
         sender = message.from_user
         sender_mention = sender.mention_html() if sender else "Unknown user"
 
@@ -177,7 +186,8 @@ async def scan_and_delete(update: Update, context: ContextTypes.DEFAULT_TYPE, fi
             await context.bot.send_message(
                 chat_id=chat.id,
                 text=(
-                    f"🚫 <b>18+ content removed</b>\n"
+                    f"🚫 <b>NSFW Media Removed</b>\n"
+                    f"Confidence: {confidence_pct}%\n"
                     f"Sent by: {sender_mention}\n"
                     f"{admin_text}, please review this user."
                 ),
@@ -211,9 +221,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
-        "Yuta bot active hai.\n"
-        "Mujhe group me ADMIN banao aur 'Delete Messages' permission do.\n"
-        "Main 24/7 sticker/photo scan karke 18+ content auto-delete karunga."
+        "Yuta bot is active.\n"
+        "Make me an ADMIN in the group and grant 'Delete Messages' permission.\n"
+        "I will scan every sticker/photo 24/7 and auto-delete NSFW content (high security mode)."
     )
 
 
